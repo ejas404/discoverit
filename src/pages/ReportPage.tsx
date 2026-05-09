@@ -1,43 +1,128 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, MapPin, UploadCloud, X, Phone, MessageSquare } from 'lucide-react'
+import AppHeader from '../components/AppHeader'
+import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
+import LocationPicker from '../components/LocationPicker'
 
 const CATEGORIES = ['Electronics', 'Accessories', 'Bags', 'Pets', 'Documents', 'Clothing', 'Keys', 'Other']
 
 export default function ReportPage() {
     const navigate = useNavigate()
+    const { user } = useAuth()
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const [loading, setLoading] = useState(false)
+
     const [tab, setTab] = useState<'missing' | 'found'>('missing')
     const [itemName, setItemName] = useState('')
     const [category, setCategory] = useState('')
     const [location, setLocation] = useState('')
+    const [lat, setLat] = useState<number | undefined>()
+    const [lng, setLng] = useState<number | undefined>()
     const [description, setDescription] = useState('')
+    const [itemColor, setItemColor] = useState('#6366f1')
     const [contact, setContact] = useState<'chat' | 'phone'>('chat')
-    const [photos, setPhotos] = useState<string[]>([])
+
+    const [photos, setPhotos] = useState<{ file: File; preview: string }[]>([])
 
     const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || [])
         files.forEach((file) => {
-            const reader = new FileReader()
-            reader.onload = (ev) => {
-                setPhotos((prev) => [...prev, ev.target?.result as string])
-            }
-            reader.readAsDataURL(file)
+            const preview = URL.createObjectURL(file)
+            setPhotos((prev) => [...prev, { file, preview }])
         })
     }
 
     const removePhoto = (index: number) => {
+        URL.revokeObjectURL(photos[index].preview)
         setPhotos((prev) => prev.filter((_, i) => i !== index))
     }
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        alert('Report submitted successfully!')
-        navigate('/')
+        alert('DEBUG: Submit Called')
+        if (!user) {
+            alert('DEBUG: No User')
+            return
+        }
+
+        console.log('Submitting with tab:', tab)
+        console.log('User ID:', user.id)
+
+        setLoading(true)
+        try {
+            // 1. Insert Report
+            const payload = {
+                reporter_id: user.id,
+                report_type: tab,
+                item_name: itemName,
+                category,
+                location_text: location,
+                location_lat: lat,
+                location_lng: lng,
+                description,
+                item_color: itemColor,
+                contact_preference: contact,
+                status: 'active'
+            }
+            console.log('Insert payload:', payload)
+
+            const { data: report, error: reportError } = await supabase
+                .from('reports')
+                .insert(payload)
+                .select()
+                .single()
+
+            if (reportError) {
+                console.error('Report Insert Error:', reportError)
+                throw reportError
+            }
+
+            console.log('Report created:', report)
+
+            // 2. Upload Photos
+            if (photos.length > 0) {
+                for (let i = 0; i < photos.length; i++) {
+                    const photo = photos[i]
+                    const fileExt = photo.file.name.split('.').pop()
+                    const fileName = `reports/${report.id}/${i}-${Math.random().toString(36).substring(2)}.${fileExt}`
+
+                    const { error: uploadError } = await supabase.storage
+                        .from('report-media')
+                        .upload(fileName, photo.file)
+
+                    if (uploadError) throw uploadError
+
+                    // 3. Insert Media record
+                    const { data: publicUrl } = supabase.storage.from('report-media').getPublicUrl(fileName)
+
+                    await supabase.from('media').insert({
+                        report_id: report.id,
+                        uploaded_by: user.id,
+                        public_url: publicUrl.publicUrl,
+                        file_name: photo.file.name,
+                        file_type: photo.file.type,
+                        storage_path: fileName,
+                        sort_order: i
+                    })
+                }
+            }
+
+            alert('Report submitted successfully!')
+            navigate('/')
+        } catch (err: any) {
+            console.error('Submission error full details:', err)
+            const errorMsg = err.details || err.message || (typeof err === 'string' ? err : 'Unknown error')
+            alert(`Submission Failed: ${errorMsg}`)
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
         <>
+            <AppHeader />
             <header className="back-header">
                 <button
                     id="report-back-btn"
@@ -50,10 +135,11 @@ export default function ReportPage() {
                 <h1 className="back-header-title">Report Item</h1>
             </header>
 
-            <main className="page-content" id="report-content" style={{ padding: '20px 16px' }}>
+            <main className="page-content" id="report-content" style={{ paddingTop: '20px', paddingLeft: '16px', paddingRight: '16px' }}>
                 {/* Tabs */}
                 <div className="report-tabs" role="tablist">
                     <button
+                        type="button"
                         id="tab-missing"
                         role="tab"
                         aria-selected={tab === 'missing'}
@@ -63,6 +149,7 @@ export default function ReportPage() {
                         Report Missing
                     </button>
                     <button
+                        type="button"
                         id="tab-found"
                         role="tab"
                         aria-selected={tab === 'found'}
@@ -111,13 +198,20 @@ export default function ReportPage() {
                     {/* Location */}
                     <div className="input-group">
                         <label className="input-label" htmlFor="item-location">Location</label>
-                        <div className="input-wrapper">
+                        <LocationPicker
+                            onLocationSelect={(lat, lng, address) => {
+                                setLat(lat)
+                                setLng(lng)
+                                setLocation(address)
+                            }}
+                        />
+                        <div className="input-wrapper" style={{ marginTop: '10px' }}>
                             <span className="input-icon"><MapPin size={16} /></span>
                             <input
                                 id="item-location"
                                 className="input-field"
                                 type="text"
-                                placeholder="Where did you see it?"
+                                placeholder="Address will appear here..."
                                 value={location}
                                 onChange={(e) => setLocation(e.target.value)}
                                 required
@@ -136,6 +230,31 @@ export default function ReportPage() {
                             onChange={(e) => setDescription(e.target.value)}
                             rows={4}
                         />
+                    </div>
+
+                    {/* Color Picker */}
+                    <div className="input-group">
+                        <label className="input-label" htmlFor="item-color">Item Color (Optional)</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <input
+                                id="item-color"
+                                type="color"
+                                value={itemColor}
+                                onChange={(e) => setItemColor(e.target.value)}
+                                style={{
+                                    width: '44px',
+                                    height: '44px',
+                                    padding: '0',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    backgroundColor: 'transparent'
+                                }}
+                            />
+                            <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                {itemColor.toUpperCase()}
+                            </span>
+                        </div>
                     </div>
 
                     {/* Photos */}
@@ -169,10 +288,10 @@ export default function ReportPage() {
                         {/* Photo previews */}
                         {photos.length > 0 && (
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                                {photos.map((src, i) => (
+                                {photos.map((item, i) => (
                                     <div key={i} style={{ position: 'relative', width: 70, height: 60 }}>
                                         <img
-                                            src={src}
+                                            src={item.preview}
                                             alt={`Upload ${i + 1}`}
                                             style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }}
                                         />
@@ -206,15 +325,16 @@ export default function ReportPage() {
                     </div>
 
                     {/* Contact Preference */}
-                    <div className="input-group">
+                    <div className="input-group" style={{ opacity: loading ? 0.5 : 1 }}>
                         <label className="input-label">Contact Preference</label>
                         <div className="contact-options">
                             <button
                                 type="button"
                                 id="contact-chat-btn"
                                 className={`contact-option ${contact === 'chat' ? 'selected' : ''}`}
-                                onClick={() => setContact('chat')}
+                                onClick={() => !loading && setContact('chat')}
                                 aria-pressed={contact === 'chat'}
+                                disabled={loading}
                             >
                                 <div className={`contact-radio ${contact === 'chat' ? 'selected' : ''}`}>
                                     {contact === 'chat' && <div className="contact-radio-dot" />}
@@ -226,8 +346,9 @@ export default function ReportPage() {
                                 type="button"
                                 id="contact-phone-btn"
                                 className={`contact-option ${contact === 'phone' ? 'selected' : ''}`}
-                                onClick={() => setContact('phone')}
+                                onClick={() => !loading && setContact('phone')}
                                 aria-pressed={contact === 'phone'}
+                                disabled={loading}
                             >
                                 <div className={`contact-radio ${contact === 'phone' ? 'selected' : ''}`}>
                                     {contact === 'phone' && <div className="contact-radio-dot" />}
@@ -244,8 +365,9 @@ export default function ReportPage() {
                         type="submit"
                         className="btn btn-primary btn-full"
                         style={{ padding: '15px', fontSize: '0.975rem', borderRadius: '12px', marginTop: 4 }}
+                        disabled={loading}
                     >
-                        Submit Report
+                        {loading ? 'Submitting Report...' : 'Submit Report'}
                     </button>
                 </form>
             </main>

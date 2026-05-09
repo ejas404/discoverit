@@ -1,19 +1,51 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { Search, Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react'
-import loginBanner from '../assets/login_banner.png'
+import { useAuth } from '../contexts/AuthContext'
+import { supabase } from '../lib/supabase'
+import authIllustration from '../assets/auth_illustration.png'
+import { useEffect } from 'react'
 
 export default function LoginPage() {
     const navigate = useNavigate()
+    const { user } = useAuth()
+
+    useEffect(() => {
+        if (user) {
+            navigate('/')
+        }
+    }, [user, navigate])
+
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [showPassword, setShowPassword] = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    const location = useLocation()
+    const from = location.state?.from?.pathname || '/'
+
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        // Auth logic goes here
-        navigate('/')
+        setLoading(true)
+        setError(null)
+
+        try {
+            const { error } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+            })
+
+            if (error) throw error
+
+            navigate(from, { replace: true })
+        } catch (err: any) {
+            setError(err.message || 'An error occurred during login')
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
@@ -42,10 +74,13 @@ export default function LoginPage() {
 
                     {/* Banner */}
                     <img
-                        src={loginBanner}
-                        alt="Abstract gradient banner"
+                        src={authIllustration}
+                        alt="DiscoverIt Illustration"
                         className="auth-banner"
+                        style={{ objectFit: 'contain', background: 'transparent' }}
                     />
+
+                    {error && <div className="auth-error" style={{ color: 'red', marginBottom: '1rem', fontSize: '0.875rem' }}>{error}</div>}
 
                     <form className="auth-form" onSubmit={handleSubmit} id="login-form">
                         {/* Email */}
@@ -116,8 +151,9 @@ export default function LoginPage() {
                             type="submit"
                             className="btn btn-primary btn-full"
                             style={{ padding: '15px', fontSize: '0.975rem', borderRadius: '12px' }}
+                            disabled={loading}
                         >
-                            Login <ArrowRight size={18} />
+                            {loading ? 'Logging in...' : 'Login'} <ArrowRight size={18} />
                         </button>
                     </form>
 

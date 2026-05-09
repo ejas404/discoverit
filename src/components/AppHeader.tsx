@@ -1,12 +1,16 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { Search } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
-interface AppHeaderProps {
-    isLoggedIn?: boolean
-}
-
-export default function AppHeader({ isLoggedIn = false }: AppHeaderProps) {
+export default function AppHeader() {
     const navigate = useNavigate()
+    const { user, loading } = useAuth()
+
+    if (loading) return (
+        <header className="app-header">
+            <Link to="/" className="header-logo"><div className="header-logo-icon"><Search size={18} /></div><span className="header-logo-text">DiscoverIt</span></Link>
+        </header>
+    )
 
     return (
         <header className="app-header">
@@ -18,7 +22,7 @@ export default function AppHeader({ isLoggedIn = false }: AppHeaderProps) {
             </Link>
 
             <div className="header-actions">
-                {isLoggedIn ? (
+                {user ? (
                     <button
                         id="header-profile-btn"
                         className="header-btn-signup"
